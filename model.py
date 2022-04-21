@@ -29,7 +29,7 @@ class CharCNN(nn.Module):
 
 		super(CharCNN, self).__init__()
 		self.num_filters = sum(kernel*num_filters for kernel in kernels)
-		self.kernels = nn.ModuleList([nn.Conv2d( 1 , num_filter*kernel , (kernel, embedding_dim) , stride = (1,1)) for kernel in kernels])
+		self.kernels = nn.ModuleList([nn.Conv2d( 1 , num_filters*kernel , (kernel, embedding_dim) , stride = (1,1)) for kernel in kernels])
 
 	def forward(self, x):
 
@@ -154,6 +154,7 @@ class CharacterRNNLM(nn.Module):
 		x = x.view(batch_size * seq_len , 1, mac_c_len, emb_dim)
 
 		y = self.CharCNN(x)
+
 		y = y.view(batch_size,  seq_len, -1)
 		z = self.HighwayNetwork(y)
 
@@ -165,7 +166,7 @@ class CharacterRNNLM(nn.Module):
 			z = torch.cat((f_z,b_z), dim = -1)
 
 		else:
-			z = z[:,:-2,:]
+			z = z[:,:-1,:] # z = z[:,:-1,:]
 
 		return self.Classifier(z)
 

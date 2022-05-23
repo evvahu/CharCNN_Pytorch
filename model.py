@@ -100,10 +100,19 @@ class RNNLM(nn.Module):
 	def init_hidden(self, batch_size):
 
 		if self.rnn_type == 'LSTM':
-			return (torch.zeros([self.num_layers, batch_size, self.d_rnn]),
+			if not torch.cuda.is_available():
+				return (torch.zeros([self.num_layers, batch_size, self.d_rnn]),
 					torch.zeros([self.num_layers, batch_size, self.d_rnn]))
+			else:
+				return (torch.zeros([self.num_layers, batch_size, self.d_rnn]).cuda(),
+					torch.zeros([self.num_layers, batch_size, self.d_rnn]).cuda())
+				
 		else:
-			return torch.zeros([self.num_layers, batch_size, self.d_rnn])
+			if not torch.cuda.is_available():
+				return torch.zeros([self.num_layers, batch_size, self.d_rnn])
+			else:
+				return torch.zeros([self.num_layers, batch_size, self.d_rnn]).cuda()
+
 			
 
 class Classifier(nn.Module):
@@ -146,28 +155,25 @@ class CharacterRNNLM(nn.Module):
 
 		self.Classifier = Classifier(word_vocab_size, d_rnn)
 
-	def forward(self, x):
+	def forward(self, x, evaluate=False):
 
 		x = self.EmbeddingLayer(x)
 
 		batch_size, seq_len, mac_c_len, emb_dim = x.size()
 		x = x.view(batch_size * seq_len , 1, mac_c_len, emb_dim)
-
 		y = self.CharCNN(x)
-
 		y = y.view(batch_size,  seq_len, -1)
 		z = self.HighwayNetwork(y)
-
 		hid = self.RNNLM.init_hidden(z.size()[0])
 		z, _ = self.RNNLM(z, hid)
-
 		if self.bidirectional:
 			f_z, b_z = z[:,:-2,:self.d_rnn], z[:,2:,self.d_rnn:]
 			z = torch.cat((f_z,b_z), dim = -1)
 
 		else:
-			z = z[:,:-1,:] # z = z[:,:-1,:]
-
+			if not evaluate:
+				z = z[:,:-1,:] # z = z[:,:-1,:]
+			
 		return self.Classifier(z)
 
 
@@ -176,7 +182,8 @@ class CharacterRNNLM(nn.Module):
 		'''
 		creates sentence embeddings by averaging the LSTM hidden states
 		'''
-
+		if torch.cuda.is_available:
+			x = x.cuda()
 		x = self.EmbeddingLayer(x)
 
 		batch_size, seq_len, mac_c_len, emb_dim = x.size()

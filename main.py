@@ -44,10 +44,12 @@ def evaluate(data, model, loss_compute):
 	val_perplexity = 0
 	total_val_loss = 0
 	for batch_ndx, sample in enumerate(data):
-		data_target = sample['words'][:,1:] # has to be next word 
-		data_char = sample['chars'] # has to be current word 
+		data_target = sample['words'][:,1:].long() # has to be next word 
+		data_char = sample['chars'].long() # has to be current word 
 		data_char = data_char.reshape(-1, config['seq_len'], config['word_length'])
-
+		if torch.cuda.is_available():
+			data_char = data_char.cuda()
+			data_target = data_target.cuda()
 		val_out = model(data_char)
 		val_loss = loss_compute.loss_fn(val_out.transpose(1, 2), data_target)
 		val_perplexity += float(torch.exp(val_loss))
@@ -66,12 +68,17 @@ def train(data, model, loss_compute):
 		 
 		data_char = sample['chars'].long() # has to be current word 
 		data_char = data_char.reshape(-1, config['seq_len'], config['word_length'])
+		print(data_target)
+		#print(data_char)
+		if torch.cuda.is_available():
+			data_char = data_char.cuda()
+			data_target = data_target.cuda()
 		#print('shapes: {}, {}'.format(data_char.shape, data_target.shape))
 		model.zero_grad()
 		out = model(data_char)
 		loss_one_step = loss_compute(out, data_target)
 		total_loss += float(loss_one_step)
-		print(batch_ndx, loss_one_step)
+		logging.info('batch:{}, loss: {}'.format(batch_ndx, float(loss_one_step)))
 	return total_loss/batch_ndx
 		
 if __name__ == '__main__':
@@ -79,14 +86,17 @@ if __name__ == '__main__':
 	argp.add_argument('config_path')
 	args = argp.parse_args()
 	config = toml.load(args.config_path)
-	logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler(),
-                                                    logging.FileHandler(config['log_path'])])
-	logging.info(config)
+
 	try:
-		os.makedirs(config['model_dir'])
+		os.makedirs(config['dir'])
 	except:
-		print('model directory already exists')
-	model_path = os.path.join(config['model_dir'], 'lstmmain')
+		print('directory already exists')
+	model_path = os.path.join(config['dir'], 'model')
+
+	log_path = os.path.join(config['dir'], 'log.txt')
+	logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler(),
+                                                    logging.FileHandler(log_path)])
+	logging.info(config)
 
 	logging.info('model path: {}'.format(model_path))
 	logging.info('start loading corpus')
@@ -102,6 +112,7 @@ if __name__ == '__main__':
 		else:
 			corpus = Corpus(config['path'], config['word_length'], config['seq_len'], parallel=False, cpu_count = 0)	
 	logging.info('finished loading corpus')
+	
 	data_loader_train = DataLoader(Data(corpus.train_words, corpus.train_chars, corpus.train_targets, config['word_length'], config['seq_len']), batch_size=config['bs'])
 	data_loader_valid = DataLoader(Data(corpus.valid_words, corpus.valid_chars,corpus.valid_targets, config['word_length'], config['seq_len']), batch_size=config['bs'])
 	data_loader_test = DataLoader(Data(corpus.test_words, corpus.test_chars, corpus.test_targets, config['word_length'], config['seq_len']), batch_size=config['bs'])
@@ -123,7 +134,7 @@ if __name__ == '__main__':
 
 	softmax = torch.nn.Softmax(dim=1)
 	criterion = torch.nn.CrossEntropyLoss()
-	optimizer = adabound.AdaBound(model.parameters(),  lr=1e-4, final_lr=0.01)
+	optimizer = adabound.AdaBound(model.parameters(),  lr=1e-3, final_lr=1.00)
 	scheduler = None
 	Opt = SpecOptimizer(model, optimizer, scheduler, initial_lr= config['lr'], max_norm=5)
 	loss_fn = nn.NLLLoss(ignore_index = config['padding_idx'])#padding_idx)
@@ -141,7 +152,7 @@ if __name__ == '__main__':
 			epoch_start_time = time.time()
 			train(data_loader_train, model, LossCompute)
 			val_loss, val_perpl = evaluate(data_loader_valid, model, LossCompute)
-			LossCompute.update(val_perpl)
+			LossCompute.update_lr(val_perpl)
 			logging.info('-' * 89)
 			logging.info('after epoch {}: validation loss: {}, perplexity: {},  time: {:5.2f}s'.format(epoch, val_loss, val_perpl, time.time() - epoch_start_time))
 			logging.info('-' * 89)
@@ -151,7 +162,7 @@ if __name__ == '__main__':
 					torch.save(model, f)
 					best_val_loss = val_loss
 			else:
-				logging.info('after epoch {}, no improvement lr {} will be reduced'.format(epoch, str(lr)))
+				logging.info('after epoch {}, no improvement lr will be reduced'.format(epoch))
 
 	except KeyboardInterrupt:	
 		logging.info('-' * 89)
@@ -161,7 +172,7 @@ if __name__ == '__main__':
 			model = torch.load(f)
 
     # Run on test data.
-	test_loss = evaluate(data_loader_test)
+	test_loss = evaluate(data_loader_test, model, LossCompute)
 	logging.info('*' * 89)
 	logging.info('End of training: average word probability: {}, test loss: {}'.format(0, test_loss))
 	logging.info('*' * 89)
